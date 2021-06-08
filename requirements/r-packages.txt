@@ -1,0 +1,4 @@
+tidyverse
+rjags
+lme4
+stringr
