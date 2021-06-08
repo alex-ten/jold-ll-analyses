@@ -1,0 +1,127 @@
+---
+title: "data-processing"
+output:
+  html_document:
+    df_print: paged
+---
+
+In this notebook, we clean up the raw data to prepare dataset with formats appropriate for modeling (either with rjags or lme4).
+
+```{r, imports}
+library(tidyverse)
+```
+Let's first clean up the raw data exported as a `.csv` file from [flowers-ol.bordeaux.inria.fr](flowers-ol.bordeaux.inria.fr). In this dataset, each row is a corresponds to an individual trial of the lunar lander task. The clean up includes:
+* Removing all `termination` and `unknown` trials
+* Simplifying values in the session column
+* Simplifying values in the participant column
+* Simplifying the format of date column (NB, it actually contains datetime information)
+* Splitting the `plat_xy` column, which contains `x,y` comma-delimited pairs of coordinates into two respective columns
+* Removing corrupted rows. Such rows contain short x and y trails (up to one value each). I am not sure what caused these errors, but we need to get rid of this data
+    * To control this exclusion process, I report the counts of excluded rows by participant
+* Removing the first coordinate in x and y trails. These seem to be carried over from the previous session somehow.
+After all is done, we will write the clean dataset into a .csv file.
+
+```{r, clean-up-and-report, echo=FALSE}
+# Perform the first cleaning sweep
+df <- tibble::as_tibble(read.csv('data/raw/trials/pilot.csv')) %>%  # read csv data
+    dplyr::select(!id) %>% # remove id column
+    dplyr::filter(!(outcome %in% c('termination', 'unknown'))) %>% # remove termination and unknown outcome trials
+    dplyr::mutate(
+        # refactor sessions
+        session = dplyr::recode(session, 'jold_ll.1.1'='1', 'jold_ll.2.2'='2', 'jold_ll.3.3'='3'),
+        # remove redundant prefixes from participant ids
+        participant = stringr::str_replace_all(participant, 'jold_ll -- ', ''),
+        # reformat datetime
+        date = format(as.POSIXct(date), '%m/%d %H:%M:%S'),
+        # convert char vector $forced into int
+        forced = dplyr::recode(forced, 'True'='1', 'False'='0') %>% as.numeric()
+    ) %>% 
+    tidyr::separate(plat_xy, into=c('plat_x','plat_y'), sep=',') %>% # split plat_xy into two columns
+    dplyr::mutate(
+        plat_x = as.numeric(plat_x), 
+        plat_y = as.numeric(plat_y)
+    )
+    
+# Select bad data for inspection and output
+df.bad <- dplyr::filter(df, !stringr::str_detect(x_trail, ',') | !stringr::str_detect(x_trail, ',')) %>%
+    dplyr::select(participant) %>% 
+    dplyr::group_by(participant) %>%
+    dplyr::summarise(count = dplyr::n())
+
+print(glue::glue('{nrow(df.bad)} out of {length(unique(df$participant))} participants had corrupt data (see `tbl_df` in the output).'))
+print(df.bad)
+
+# Remove the first coordinate from each element of 'x_trail' and 'y_trail'
+df <- dplyr::filter(df, stringr::str_detect(x_trail, ',') | stringr::str_detect(x_trail, ',')) %>%
+    dplyr::mutate(
+        x_trail = substr(x_trail, str_locate(x_trail, ',')[, 2]+1, nchar(x_trail)),
+        y_trail = substr(y_trail, str_locate(y_trail, ',')[, 2]+1, nchar(y_trail))
+    )
+
+# Write clean data to csv
+to_save <- 'data/clean/trials/clean_pilot_trials.csv'
+write.csv(df, file=to_save, row.names=FALSE)
+print(glue::glue('Saved to {to_save}'))
+
+print('The first 8 rows of a cleaned up dataset:')
+df %>% head(8) %>% print()
+print('And its column names:')
+colnames(df) %>% print()
+```
+
+The raw data contains long comma-delimited strings for each trial, one for each 2-d coordinate, e.g.:
+```{r}
+df$x_trail[1] %>% print()
+```
+We will summarize trial information to derive the *average* distance to the platform on each trial. We will compute two kinds of averages: a good old *flat* average and a *linearly weighted* average. The latter sums the weighted coordinates on each trial. The weights are determined by the frame order. If there are $N_t$ frames in trial $t$, the weighted average ($\textsf{wad}_t$) is taken as follows:
+
+$$\textsf{wad}_t = \frac{1}{N_t}\sum_{i=1}^{N_t} i \times S_i$$
+where $S$ is the Euclidean distance of the lander from the target in frame $i$ of trial $t$, and $i = 1, ..., N_t$.
+```{r, echo=FALSE}
+df <- tibble::as_tibble(read.csv('data/clean/trials/clean_pilot_trials.csv')) #%>%  # read csv data
+
+# Find the maximum number of frames in all trials 
+# (make sure that the number of x and y coordinates matches)
+x.len <- lengths(str_split(df$x_trail, ','))
+y.len <- lengths(str_split(df$y_trail, ','))
+lens_match <- all(x.len == y.len)
+print(glue::glue('Lengths of X and Y coordinates-trails match for each trial: {lens_match}'))
+max_len = max(x.len)
+
+# Calculate 1-d distances for x and y trails for each trial
+# Since each trial has different number of datapoints, pad shorter trials by max lenth
+x.matrix <- str_split_fixed(df$x_trail, ',', n=max_len) %>% as.numeric() %>% matrix(ncol=max_len)
+y.matrix <- str_split_fixed(df$y_trail, ',', n=max_len) %>% as.numeric() %>% matrix(ncol=max_len)
+
+# Calculate Euclidean distances on each trial in 2-d
+euclid <- sqrt((x.matrix - df$plat_x)^2 + (y.matrix - df$plat_y)^2)
+# Flat average distances within trials
+fad <- rowMeans(euclid, na.rm=T) 
+# Weighted average distances within trials
+vals <- !is.na(euclid)
+weights <- t(apply(vals, FUN=cumsum, MARGIN=1)) * vals
+rel.weights <- weights / rowSums(weights, na.rm=T)
+wad <- rowSums(euclid * rel.weights, na.rm=T)
+
+df <- dplyr::select(df, -c(x_trail, y_trail, plat_x, plat_y)) %>% 
+    dplyr::mutate(
+        fad = fad,
+        wad = wad
+    )
+
+# Write summarized trials dataset to csv
+to_save <- 'data/clean/trials/summarized_pilot_trials.csv'
+write.csv(df, file=to_save, row.names=FALSE)
+print(glue::glue('Saved to {to_save}'))
+
+print('The first 8 rows of a cleaned up dataset:')
+df %>% head(8) %>% print()
+print('And its column names:')
+colnames(df) %>% print()
+```
+
+Finally we will prepare a dataset that can be used in the **model of learning dynamics**.
+
+```{r, model-one-dataset, echo=FALSE}
+df <- tibble::as_tibble(read.csv('data/clean/trials/summarized_pilot_trials.csv')) #%>%  # read csv data
+```
