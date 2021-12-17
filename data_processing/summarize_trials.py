@@ -48,7 +48,13 @@ def main():
     # Summarize trial trajectories
     df = df.apply(summarize_trial, axis=1)
     df = df.drop(columns=['x_trail', 'y_trail', 'plat_x', 'plat_y'])
+    sign = 2 * df.outcome.str.contains('success').astype(int) - 1
+    df = df.assign(
+        cwad = df.wad * sign,
+        cfad = df.fad * sign
+    )
 
+    print(df.head())
     # Save dataset
     print(f'Saving data to {args.out_path}')
     df.to_csv(

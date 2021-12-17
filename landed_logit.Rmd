@@ -1,0 +1,152 @@
+---
+title: "Logit model of trial outcome"
+output: html_notebook
+---
+
+# Model description
+
+## The data
+
+Multilevel logit model of competence as function of experience. Our data is grouped at 3 levels, one of which is nested inside the other two, which are in turn crossed. The observations at the lowest level are trial outcomes and the cumulative number of past trials ($L_{ijt}$ and $\mathsf{ijt}$). They are nested within sessions and within participants. That is, any particular outcome and trial count is associated with only one participant and one session. Sessions and participants, however, are crossed: the same participants can be observed across multiple sessions and the same sessions can be observed across multiple participants.
+
+## The sampling process
+
+Let $L_{ijt}$ be the binary outcome (landing or not) on trial of $i$-th subject in session $j$ on trial $t$. $L_{ijt}$ is a Bernoulli random variable that depends the level of competence of an individual at a particular time, $c_{ijt}$:
+
+$$L_{ijt} \sim \mathrm{Bernoulli}(c_{ijt})$$ Note that as a parameter of the Bernoulli distribution, $c \in [0, 1]$, but the $\mathrm{logit}(c) \in \mathbb{R}$. As you remember, the $\mathrm{logit}$ of Bernoulli probability is the log-odds of that probability. We can think of the log-odds of competence as just another interpretation of competence. In the rest of this notebook competence will mean the log-odds of the probability of landing.
+
+We assume that the average competence varies across sessions and participants and that it scales with experience:
+
+$$\mathrm{logit}(c_{ijt}) = (\mathsf{cbase} + \mathsf{subj}_{ij}) + \mathsf{cgain}_{ij}*\mathsf{exp}_{ijt}$$
+
+More precisely, the model above makes the following assumptions:
+
+-   Competence has an overall mean denoted as $\mathsf{cbase}$
+
+-   Competence of subject $i$ is a deviation from that mean (i.e., has a random effect of subject)
+    -   The random effect of subject, in turn, depends not only on the subject's overall mean competence but also that subject's level of competence at a particular session:
+    -   $\mathsf{subj}_{ij} \sim \mathcal{N}(\mu_{ij}, \sigma^2_{\mathsf{subj}_i})$
+    -   $\mu_{\mathsf{subj}_{ij}} = \mu_{i} + \mu_{ij}$
+-   Gain in competence per unit of experience varies across subjects and sessions. That is how much competence increases with more practice depends on the subjects (some learn faster than others) and session (a subject can learn more on session 1 vs session 2)
+
+# Model fitting
+
+Let's fit this model using Bayesian inference with Gibbs sampling (from the `jagsUI` library). We will also use `tidyverse` for data manipulation, and `ggmcmc` and `MCMCvis` to help us analyze the fitted model.
+
+```{r}
+library(jagsUI)
+library(tidyverse)
+library(ggmcmc)
+library(MCMCvis)
+```
+
+First, I'll load the data from `'data/clean/trials/summarized_pilot_trials.csv'` and then select only those columns that we will actually use. I convert the outcome, participant, and session columns to numeric and then use `tidyr::complete` to fill in the implicitly missing data.
+
+## Data wrangling
+
+```{r}
+df <- tibble::as_tibble(read.csv('data/clean/trials/summarized_pilot_trials.csv')) %>% # read csv data
+    dplyr::select(c(participant, session, outcome, trial, forced)) %>% 
+    dplyr::filter(session != 3, forced == 1) %>% 
+    dplyr::mutate(
+        outcome = outcome %>% stringr::str_detect('success') %>% as.numeric(),
+        participant = participant %>% as.factor() %>% as.numeric(),
+        session = session %>% as.numeric()
+    ) %>%
+    tidyr::complete(trial, nesting(participant, session)) %>% 
+    dplyr::select(c(participant, session, outcome, trial)) %>%
+    dplyr::arrange(participant,session,trial) #%>%
+    dplyr::filter(!(participant %in% c(2,3,4,5,7,10)))
+
+df.summary <- df %>% group_by(participant, session) %>% summarise(count = n(), landed = sum(outcome, na.rm=T)) %>% print()
+df.summary
+```
+
+## MCMC
+
+The model is defined in `jags` language. It is written out in a separate text file [here](file:///Users/alexten/Projects/JOLD/Study/jold-ll-analyses/jags_models). Note that we are interested in not only the point estimates of individual `cgain` parameters that vary by participant and session. We also want to know what is the uncertainty around these estimates, which is why we rely Bayesian inference via MCMC sampling rather than a maximum-likelihood estimation. This uncertainty might be relevant for the generative process of improvement judgments. When the improvement estimates are matched for two judgments, is it not reasonable to assume that a judgment about a noisier signal should have less chances of being positive?
+
+```{r}
+N.trials <- length(unique(df$trial))
+N.sessions <- length(unique(df$session))
+N.subjects <- length(unique(df$participant))
+
+data.jags <- list(
+    L = array(df$outcome, dim=c(N.trials, N.sessions, N.subjects)),
+    exp = df$trial,
+    N.trials = N.trials,
+    N.sessions = N.sessions,
+    N.subjects = N.subjects
+)
+
+# Initial values
+inits <- function(){
+    list(
+        cbase = rnorm(1), 
+        rs.cgain = rnorm(N.subjects*N.sessions),
+        re.subj.sess = rnorm(N.subjects*N.sessions)
+    )
+}
+
+inits <- function() {}
+
+# Parameters monitored
+params <- c('cbase', 'base.cgain', 're.subj', 're.subj.sess', 'rs.cgain', 'sd.re.subj', 'sd.re.subj.sess', 'sd.re.cgain')
+
+# MCMC settings
+na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # core number for parallel computation
+
+# to see progress do not use parallel computation (slower)
+landed_logit <- jags(
+    data = data.jags, 
+    parameters.to.save = params, 
+    model.file = 'jags_models/landed_logit.txt', 
+    n.adapt = 1e3,
+    n.chains = 3,
+    n.thin = 10, 
+    n.iter = 15e3, 
+    n.burnin = 5e3, 
+    parallel = TRUE
+)
+```
+
+# Analyses of MCMC sampling
+
+```{r}
+MCMCtrace(landed_logit, params = params[3], 
+                   ISB = FALSE, exact = FALSE, ind = TRUE,
+                   Rhat = TRUE, n.eff = TRUE, pdf = FALSE)
+MCMCtrace(landed_logit, params = params[5], 
+                   ISB = TRUE, exact = FALSE, ind = TRUE,
+                   Rhat = TRUE, n.eff = TRUE, pdf = FALSE)
+landed_logit
+# DIC info: (pD = var(deviance)/2) 
+# pD = 7.2 and DIC = 390.879 
+# DIC is an estimate of expected predictive error (lower is better).
+```
+
+```{r, visualizing-model-params}
+rs.cgain.means = landed_logit$mean$rs.cgain
+rs.cgain.clbs = landed_logit$q2.5$rs.cgain
+rs.cgain.cubs = landed_logit$q97.5$rs.cgain
+lmdf <- as_tibble(cbind(rs.cgain.means, rs.cgain.clbs, rs.cgain.cubs)) %>% 
+    dplyr::rename(
+        mean.1 = V1,
+        mean.2 = V2,
+        cbl.1 = V3,
+        cbl.2 = V4,
+        cbu.1 = V5,
+        cbu.2 = V6
+    ) %>% 
+    dplyr::mutate(participant = 1:N.subjects) %>% 
+    tidyr::pivot_longer(c(mean.1, mean.2, cbl.1, cbl.2, cbu.1, cbu.2), names_to = c('.value','session'), names_pattern = '(.+).(.+)') %>% 
+    dplyr::filter(!(participant %in% c(2, 10)))
+
+f <- ggplot(data=lmdf, mapping=aes(participant, mean)) +
+    geom_errorbar(
+        mapping = aes(ymin = cbl, ymax = cbu, color = session),
+        position = position_dodge(0.3), width = 0.2
+        ) +
+    geom_point(mapping=aes(color=session), position=position_dodge(0.3))
+f
+```

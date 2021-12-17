@@ -1,0 +1,37 @@
+---
+title: 'Individual models of competence gain'
+output: html_notebook
+---
+
+```{r}
+library(arm)
+```
+
+
+```{r}
+df <- tibble::as_tibble(read.csv('data/clean/trials/summarized_pilot_trials.csv')) %>% # read csv data
+    dplyr::select(c(participant, session, outcome, trial, forced)) %>% 
+    dplyr::filter(forced == 1) %>% 
+    dplyr::mutate(
+        outcome = outcome %>% stringr::str_detect('success') %>% as.numeric(),
+        participant = participant %>% as.factor() %>% as.numeric(),
+        session = session %>% as.numeric()
+    )
+
+df.summary <- df %>% group_by(participant, session) %>% summarise(count = n(), landed = sum(outcome, na.rm=T)) %>% print()
+```
+
+```{r}
+# Sparce session
+df.sparce <- df %>% filter(participant==11, session==1)
+m <- glm(outcome ~ trial, data=df.sparce, family='binomial')
+summary(m)
+
+df.sparce <- df %>% filter(participant==11, session==2)
+m <- glm(outcome ~ trial, data=df.sparce, family='binomial')
+summary(m)
+
+df.sparce <- df %>% filter(participant==11, session==3)
+m <- glm(outcome ~ trial, data=df.sparce, family='binomial')
+summary(m)
+```

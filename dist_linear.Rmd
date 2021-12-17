@@ -1,0 +1,138 @@
+---
+title: "Logit model of trial outcome"
+output: html_notebook
+---
+
+# Part I: the logit model
+
+<p style:"color: darkgray; text-align: center">Multilevel logit model of competence as function of experience</p>
+
+## Model specification
+
+Let $L_{t}$ be the binary outcome (landing or not) on trial $t$ of session $j$. $L_{t}$ is a Bernoulli random variable that depends the level of competence at a particular time, $c_{t}$:
+
+$$L_{t} \sim \mathrm{Bernoulli}(c_{t})$$ Note that as a parameter of the Bernoulli distribution, $c \in [0, 1]$, but the log-odds (or $\mathrm{logit}$) of $\mathrm{logit}(c) \in \mathbb{R}$. We will assume that the random variable $\mathrm{logit}(c_{t})$ is normally distributed: $$\mathrm{logit}(c_{t}) \sim \mathcal{N}(\mu_{c_{t}}, \sigma^2_{c})$$ such that $\mu_{c_{t}} = \mathsf{cbase}_t + \mathsf{cgain}_t + \epsilon_t$, and $\epsilon_t \sim \mathcal{N}(0, \sigma^2_{c})$. Parameter in the linear model is assumed to be normally distributed around 0 with variance that we will estimate: $$
+\mathsf{cbase} \sim \mathcal{N}(0, \sigma^2_{\mathsf{cbase}}) \\
+\mathsf{cgain} \sim \mathcal{N}(0, \sigma^2_{\mathsf{cgain}}) 
+$$
+
+Let's fit this model using Bayesian inference with Gibbs sampling (from the `jagsUI` library). We will also use `tidyverse` for data manipulation, and `ggmcmc` and `MCMCvis` to help us analyze the fitted model.
+
+```{r}
+library(jagsUI)
+library(tidyverse)
+library(ggmcmc)
+library(MCMCvis)
+```
+
+First, I'll load the data from `'data/clean/trials/summarized_pilot_trials.csv'` and then select only those columns that we will actually use. I convert the outcome, participant, and session columns to numeric and then use `tidyr::complete` to fill in the implicitly missing data.
+
+## Some data wrangling
+
+```{r}
+df <- tibble::as_tibble(read.csv('data/clean/trials/summarized_pilot_trials.csv')) %>% # read csv data
+    dplyr::select(c(participant, session, outcome, trial, forced)) %>% 
+    dplyr::filter(session != 3, forced == 1) %>% 
+    dplyr::mutate(
+        outcome = outcome %>% stringr::str_detect('success') %>% as.numeric(),
+        participant = participant %>% as.factor() %>% as.numeric(),
+        session = session %>% as.numeric()
+    ) %>%
+    tidyr::complete(trial, nesting(participant, session)) %>% 
+    dplyr::select(c(participant, session, outcome, trial)) %>%
+    dplyr::arrange(participant,session,trial) %>%
+    dplyr::filter(!(participant %in% c(2,10)))
+
+df.summary <- df %>% group_by(participant, session) %>% summarise(count = n(), landed = sum(outcome, na.rm=T)) %>% print()
+```
+
+## Fitting the model
+
+The model is defined in `jags` language. It is written out in a separate text file [here](file:///Users/alexten/Projects/JOLD/Study/jold-ll-analyses/jags_models). Note that we are interested in not only the point estimates of individual `cgain` parameters that vary by participant and session. We also want to know what is the uncertainty around these estimates, which is why we rely Bayesian inference via MCMC sampling rather than a maximum-likelihood estimation. This uncertainty might be relevant for the generative process of improvement judgments. When the improvement estimates are matched for two judgments, is it not reasonable to assume that a judgment about a noisier signal should have less chances of being positive?
+
+```{r}
+N.trials <- length(unique(df$trial))
+N.sessions <- length(unique(df$session))
+N.subjects <- length(unique(df$participant))
+
+data.jags <- list(
+    L = array(df$outcome, dim=c(N.trials, N.sessions, N.subjects)),
+    exp = df$trial,
+    session_id = df$session,
+    N.trials = N.trials,
+    N.sessions = N.sessions,
+    N.subjects = N.subjects
+)
+
+# Initial values
+inits <- function(){
+    list(
+        cbase = rnorm(1), 
+        rs.cgain = rnorm(N.subjects*N.sessions),
+        sd.re.subj = runif(1),
+        sd.re.sess = runif(1),
+        sd.re.cgain = runif(1)
+    )
+}
+
+# Parameters monitored
+params <- c('cbase', 'base.cgain', 're.sess', 're.subj', 'rs.cgain', 'sd.re.sess', 'sd.re.subj', 'sd.re.cgain')
+
+# MCMC settings
+na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # core number for parallel computation
+
+# to see progress do not use parallel computation (slower)
+landed_logit <- jags(
+    data.jags, inits, params, 'jags_models/landed_logit.txt', n.adapt=1e3, n.chains=3, n.thin=10, n.iter=15e3, n.burnin=5e3, parallel=T
+)
+
+head(print(landed_logit))
+```
+
+# Analyses of MCMC sampling
+
+```{r}
+S <- ggs(landed_logit$samples)
+ggs_density(S,family = params[1])
+ggs_density(S,family = params[2])
+ggs_traceplot(S,family = params[1])
+ggs_traceplot(S,family = params[2])
+
+MCMCtrace(landed_logit, params = params[1], 
+                   ISB = FALSE, exact = FALSE, ind = TRUE,
+                   Rhat = TRUE, n.eff = TRUE, pdf = FALSE)
+MCMCtrace(landed_logit, params = params[5], 
+                   ISB = TRUE, exact = FALSE, ind = TRUE,
+                   Rhat = TRUE, n.eff = TRUE, pdf = FALSE)
+landed_logit
+# DIC info: (pD = var(deviance)/2) 
+# pD = 7.2 and DIC = 390.879 
+# DIC is an estimate of expected predictive error (lower is better).
+```
+
+```{r, visualizing-model-params}
+rs.cgain.means = landed_logit$mean$rs.cgain
+rs.cgain.clbs = landed_logit$q2.5$rs.cgain
+rs.cgain.cubs = landed_logit$q97.5$rs.cgain
+lmdf <- as_tibble(cbind(rs.cgain.means, rs.cgain.clbs, rs.cgain.cubs)) %>% 
+    dplyr::rename(
+        mean.1 = V1,
+        mean.2 = V2,
+        cbl.1 = V3,
+        cbl.2 = V4,
+        cbu.1 = V5,
+        cbu.2 = V6
+    ) %>% 
+    dplyr::mutate(participant = 1:N.subjects) %>% 
+    tidyr::pivot_longer(c(mean.1, mean.2, cbl.1, cbl.2, cbu.1, cbu.2), names_to = c('.value','session'), names_pattern = '(.+).(.+)') %>% 
+    dplyr::filter(!(participant %in% c(2, 10)))
+
+f <- ggplot(data=lmdf, mapping=aes(participant, mean)) +
+    geom_errorbar(
+        mapping = aes(ymin = cbl, ymax = cbu, color = session),
+        position = position_dodge(0.3), width = 0.2
+        ) +
+    geom_point(mapping=aes(color=session), position=position_dodge(0.3))
+f
+```
+

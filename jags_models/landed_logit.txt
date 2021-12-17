@@ -1,0 +1,58 @@
+model {
+    # Priors
+    # cbase ~ dnorm(0, 0.001)
+    # cgain ~ dnorm(0, 0.001)
+    cbase ~ dnorm(0, .0001) # Cauchy(0, 2.5) prior (Gelman et al., 2008)
+    # cgain ~ dt(0, 1/2.5^2, 1)
+    
+    # # Random effect of session
+    # for (j in 1:N.sessions){
+    #     # re.sess[j] will tell us the average log-odds of L=1 for each j-th session
+    #     re.sess[j] ~ dnorm(0, tau.re.sess)
+    # }
+    # tau.re.sess <- pow(sd.re.sess, -2)
+    # sd.re.sess ~ dexp(1)
+    
+    # # Random effect of participant
+    # for (i in 1:N.subjects){
+    #     # re.subj[i] will tell us the average log-odds of L=1 for each i-th subject
+    #     re.subj[i] ~ dnorm(0, tau.re.subj)
+    # }
+    # tau.re.subj <- pow(sd.re.subj, -2)
+    # sd.re.subj ~ dexp(1)
+    
+    # Random effects
+    for (i in 1:N.subjects){
+        base.cgain[i] ~ dnorm(0, .0001)
+        base.subj[i] ~ dnorm(0, .0001)
+        for (j in 1:N.sessions){
+            # The gain of subject i in session j is given by
+            # the overall baseline gain (across all subjects) + the gain of subject i in session j
+            rs.cgain[i, j] = base.cgain[i] + subj.cgain[i, j]
+            subj.cgain[i, j] ~ dnorm(0, tau.rs.cgain[i, j])
+            tau.rs.cgain[i, j] <- pow(sd.rs.cgain[i, j], -2)
+            sd.rs.cgain[i, j] ~ dexp(1)
+            
+            # The effect of subject i in session j has a gaussian prior
+            re.subj[i, j]  <- base.subj[i] + re.subj.sess[i, j]
+            re.subj.sess[i, j] ~ dnorm(0, tau.re.subj.sess[i, j])
+            tau.re.subj.sess[i, j] <- pow(sd.re.subj.sess[i, j], -2)
+            sd.re.subj.sess[i, j] ~ dexp(1)
+        }
+    }
+    
+    # Likelihood
+    for (i in 1:N.subjects){
+        for (j in 1:N.sessions){
+            for (t in 1:N.trials){
+                L[t, j, i] ~ dbern(c_stable[t, j, i])
+                # The min-max trick stabilizes numerical computation
+                c_stable[t, j, i] <- max(0.000001, min(0.999999, c[t, j, i])) 
+                # The log-odds of c of subject i on session j at trial t is equal to:
+                #   the overall mean (baseline) log-odds + the baseline log-odds of session j + baseline log-odds of subject i
+                #       + the fixed amount of unit-gain in log-odds scaled by the amount of experience at time t
+                logit(c[t, j, i]) <- cbase + re.subj[i, j] + rs.cgain[i, j]*exp[t]
+            }
+        }
+    }
+}

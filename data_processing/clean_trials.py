@@ -42,9 +42,22 @@ def pop_1st_v(val):
     Returns
     -------
     str
-        input string, less the first 10 values
+        input string, less the first value
     '''
     return ','.join(val.split(',')[1:])
+
+
+def displacement_1d(x):
+    xnum = np.array(x.split(',')).astype(int)
+    displ = np.abs(xnum[:-10] - xnum[10:])
+    return ','.join(displ.astype(str).tolist())
+
+
+def displacement_2d(df):
+    xnum = np.array(df.x_displ.split(',')).astype(int)
+    ynum = np.array(df.y_displ.split(',')).astype(int)
+    displ2d = np.sqrt(xnum**2 + ynum**2)
+    return ','.join(displ2d.astype(str).tolist())
 
 
 def main():
@@ -70,7 +83,7 @@ def main():
     # Remove study prefixes from participant identifiers
     df = df.assign(participant = df.participant.str.strip('jold_ll -- '))
 
-    # Split plat_xy into to separate columns
+    # Split plat_xy into two separate columns
     df[['plat_x','plat_y']] = df.plat_xy.apply(split_xy)
     df = df.drop(columns=['plat_xy'])
 
@@ -89,6 +102,23 @@ def main():
     # and cut the first 10 frames of each array (i.e., remove coordinates of the first 10 frames)
     df = df.assign(x_trail = df.x_trail.apply(pop_1st_v))
     df = df.assign(y_trail = df.y_trail.apply(pop_1st_v))
+
+    # Calculate 1D displacement
+    df = df.assign(
+        x_displ = df.x_trail.apply(displacement_1d),
+        y_displ = df.y_trail.apply(displacement_1d)
+    )
+    # # Calculate 2D displacement
+    # df = df.assign(
+    #     xy_displ = displacement_2d,
+    # )
+
+    # Remove participants who finished no more than 5 trials in total
+    leavers = df.groupby('participant').filter(lambda x: x.shape[0] <= 5).participant.unique()
+    n_left = len(leavers)
+    print(f'Removed {n_left} participants with no more than 5 trials in total:')
+    print(leavers)
+    df = df.groupby('participant').filter(lambda x: x.shape[0] > 5)
     
     # Save dataset
     print(f'Saving data to {args.out_path}')

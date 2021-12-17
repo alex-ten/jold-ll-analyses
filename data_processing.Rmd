@@ -1,5 +1,5 @@
 ---
-title: "data-processing"
+title: "Data cleaning"
 output:
   html_document:
     df_print: paged
@@ -78,7 +78,7 @@ We will summarize trial information to derive the *average* distance to the plat
 $$\textsf{wad}_t = \frac{1}{N_t}\sum_{i=1}^{N_t} i \times S_i$$
 where $S$ is the Euclidean distance of the lander from the target in frame $i$ of trial $t$, and $i = 1, ..., N_t$.
 ```{r, echo=FALSE}
-df <- tibble::as_tibble(read.csv('data/clean/trials/clean_pilot_trials.csv')) #%>%  # read csv data
+df <- tibble::as_tibble(read.csv('data/clean/trials/clean_pilot_trials.csv'))  # read csv data
 
 # Find the maximum number of frames in all trials 
 # (make sure that the number of x and y coordinates matches)
