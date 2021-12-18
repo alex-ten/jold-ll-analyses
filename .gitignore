@@ -2,3 +2,5 @@ pyenv/
 .Rhistory
 .vscode
 .Rproj.user
+distcan/
+data_processing/temp/
