@@ -81,7 +81,7 @@ def main():
     df = df.assign(date = df.date.dt.round('1s').dt.strftime("%m/%d %H:%M:%S"))
 
     # Remove study prefixes from participant identifiers
-    df = df.assign(participant = df.participant.str.strip('jold_ll -- '))
+    df = df.assign(participant = df.participant.str.replace('jold_ll -- ', '', regex=False))
 
     # Split plat_xy into two separate columns
     df[['plat_x','plat_y']] = df.plat_xy.apply(split_xy)
