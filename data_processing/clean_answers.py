@@ -25,7 +25,7 @@ def main():
 
     # Remove study prefixes from participant identifiers and question handles
     df = df.assign(
-        participant = df.participant.str.strip('jold_ll -- '),
+        participant = df.participant.str.replace('jold_ll -- ', '', regex=False),
         question = df.question.str.strip('jold-').str.lower()
     )
 

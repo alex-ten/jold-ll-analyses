@@ -25,18 +25,28 @@ def summarize_trial(row):
     '''
 
     # For each frame compute signed 1-d distances from platform
-    s_x = np.array(row.x_trail.split(',')).astype(int) - row.plat_x
-    s_y = np.array(row.y_trail.split(',')).astype(int) - row.plat_y
+    s_x = np.array(row.x_trail.split(',')).astype(int)
+    s_y = np.array(row.y_trail.split(',')).astype(int)
+
+    d_x = s_x - row.plat_x
+    d_y = s_y - row.plat_y
 
     # For each frame compute Euclidean distances to platform
-    s = np.sqrt(s_x**2 + s_y**2)
+    d = np.sqrt(d_x**2 + d_y**2)
 
     # Flat-average summary of distances
-    row['fad'] = np.mean(s)
+    row['fad'] = np.mean(d)
 
     # Weighted-average summary of distances
-    relative_weights = np.arange(1, s.size + 1)
-    row['wad'] = np.sum(s * (relative_weights/np.sum(relative_weights)))
+    relative_weights = np.arange(1, d.size + 1)
+    row['wad'] = np.sum(d * (relative_weights/np.sum(relative_weights)))
+
+    # Speed
+    v_x = np.abs(s_x[:1] - s_x[1:])
+    v_y = np.abs(s_y[:1] - s_y[1:])
+
+    row['ahs'] = np.mean(v_x)
+    row['avs'] = np.mean(v_y)
 
     return row
 

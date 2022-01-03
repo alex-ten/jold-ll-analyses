@@ -4,12 +4,13 @@ import numpy as np
 import statsmodels.formula.api as sma
 from IPython.display import display as disp
 import pickle, os
+from scipy.stats import zscore
 
 cwd = os.getcwd()
 
 class args():
-    in_path = os.path.join(cwd, 'data/clean/trials/summarized_pilot_trials.csv')
-    out_path = os.path.join(cwd, 'data/clean/trials/summarized_pilot_sessions1.csv')
+    in_path = '../data/clean/trials/summarized_pilot_trials.csv'
+    out_path = '../data/clean/trials/summarized_pilot_sessions.csv'
 
 
 def summarize_session(sess):
@@ -22,23 +23,17 @@ def summarize_session(sess):
     summary['wadSlope'] = wadSlope
 
     # Slope (of log-odds) for success probability
-    try:
-        succOddsSlope = sma.logit('success ~ trial', data=sess).fit().params['trial']
-    except:
-        succOddsSlope = 0
-    summary['succOddsSlope'] = succOddsSlope
-
-    # Slope of key_presses
-    pressesSlope = sma.ols('presses ~ trial', data=sess).fit().params['trial']
-    summary['pressesSlope'] = pressesSlope
+    summary['sr'] = np.mean(sess.success)
+    summary['srd'] = np.mean(sess.success[half:]) - np.mean(sess.success[:half])
 
     # Means of the second half of session
     summary['wadMeanRecent'] = np.mean(sess.wad[half:])
     summary['pressesMeanRecent'] = np.mean(sess.presses[half:])
     summary['successRateRecent'] = np.mean(sess.success[half:])
 
-    summary['wadDiff'] = np.mean(sess.wad[half:]) - np.mean(sess.wad[-half:])
-    summary['succDiff'] = np.mean(sess.success[half:]) - np.mean(sess.success[-half:])
+    summary['wadDiff'] = np.mean(sess.wad[half:]) - np.mean(sess.wad[half:])
+    
+    summary['freeChoiceAccepted'] = np.all(sess.index.get_level_values(2))
     
     return pd.Series(summary.values(), index=summary.keys())
 

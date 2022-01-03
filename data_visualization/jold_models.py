@@ -8,7 +8,7 @@ import statsmodels.formula.api as smf
 
 class args():
     ans_data = '../data/clean/answers/clean_answers.csv'
-    sess_data = '../data/clean/trials/summarized_pilot_sessions.csv'
+    sess_data = '../data/clean/trials/summarized_pilot_sessions1.csv'
 
 
 def pval_stars(p):
@@ -25,14 +25,14 @@ def pval_stars(p):
 # %%
 
 varz = [
-    'wad_slope',
-    'sodds_slope',
-    'presses_slope',
-    'wad_mean2',
-    'presses_mean2',
-    'sr2',
-    'surp_1_999',
-    'surp_1_1'
+    'wadSlope',
+    'succOddsSlope',
+    'pressesSlope',
+    'wadMeanRecent',
+    'pressesMeanRecent',
+    'successRateRecent',
+    'wadDiff',
+    'succDiff'
 ]
 select = ['participant', 'session', 'forced'] + varz
 tri = pd.read_csv(args.sess_data, index_col=None)
@@ -81,7 +81,7 @@ jolds = ans.loc[ans.inst.eq('jold')].set_index(['participant', 'session']).sort_
 jolds = jolds.reset_index().pivot(index=['participant','inst','qid'], columns='session', values='value') - 6
 
 _ = slice(None)
-sns.regplot(x=jolds.loc[(_, _, 1), 2].dropna(), y=jolds.loc[(_, _, 2), 2])
+sns.regplot(x=jolds.loc[(_, _, 1), 1].dropna(), y=jolds.loc[(_, _, 8), 1])
 plt.xlabel('JOLD 1')
 plt.ylabel('JOLD 2')
 plt.gca().axes.set_aspect('equal')
